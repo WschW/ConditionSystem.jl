@@ -1,7 +1,7 @@
-authors = ["WschW <warren.sch.441@gmail.com>"]
+authors = ["Warren Schweigert"]
 name = "ConditionSystem"
 uuid = "3e6460e2-1222-11e9-2d56-c16ffde28ff8"
-version = "0.1.0"
+version = "0.0.1"
 
 [deps]
 
