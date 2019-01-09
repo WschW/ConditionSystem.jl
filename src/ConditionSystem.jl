@@ -1,27 +1,47 @@
 module ConditionSystem
 
-struct HandlerStackKey end
+struct CondtionFrameKey end
 
-#export AbstractCondition, signal!, withhandler, AbstractCondition
-
-abstract type AbstractCondition end
+export signal!, withhandler, get_restarts
 
 struct HandlerEntry
-    condition::Type{<:AbstractCondition}
+    condition::DataType
     handler::Function
 end
 
-function get_handlers()
+struct ConditionFrame
+    handlerStack::Vector{HandlerStackKey}
+    restarts::Vector{Symbol}
+end
+
+struct Restart
+
+end
+
+function get_conditionframe()
     key = HandlerStackKey()
     task_storage = task_local_storage()
     if haskey(task_storage,key)
-        return task_storage[key]::Vector{HandlerEntry}
+        return task_storage[key]::ConditionFrame
     end
-    out = HandlerEntry[]
+    out = ConditionFrame()
     task_storage[key] = out
 end
 
-function push_handler!(condition::Type{<:AbstractCondition},handler::Function)
+get_handlers() = get_conditionframe().handlerStack
+get_restarts() = get_conditionframe().restarts
+
+
+restart(x::Symbol) = restart!(Restart(x))
+restart(x::Restart) = throw(restart)
+
+propogate_restart(x::Restart) = rethrow(x)
+propogate_restart(x::Any) = rethrow(x)
+propogate_restart(x::Any,match) = rethrow(x)
+propogate_restart(x::Restart,match) = x == match ? nothing : rethrow(x)
+
+
+function push_handler!(condition::DataType,handler::Function)
     push!(get_handlers(),HandlerEntry(condition,handler))
 end
 
@@ -30,11 +50,11 @@ function pop_handler!()
 end
 
 """
-searches for an applicable handler case, returns true if found and run, else false
+searches for an applicable handler case if it finds a handler case such that condition <:
 """
-function signal!(datum::Type{<:AbstractCondition},args...)
+function signal!(datum::DataType,args...)
     handlers = get_handlers()
-    pos = findfirst(x->datum <: x.condition,handlers)
+    pos = findlast(x->datum <: x.condition,handlers)
     if pos === nothing
         false
     else
@@ -46,17 +66,35 @@ end
 """
 runs the given function and handles signals
 """
-function withhandler(fn,condition::Type{<:AbstractCondition},handler::Function)
-    handlers = get_handlers()
+function withhandler(fn,condition::DataType,handler::Function; restart::Union{Function,Symbol} = nothing)
+    frame = get_conditionframe()
+    handlers = frame.handlers
     push!(handlers,HandlerEntry(condition,handler))
-    try
-        fn()
-    finally
-        pop!(handlers)
+    if restart === nothing
+        try
+            fn()
+        finally
+            pop!(handlers)
+        end
+    else
+        try
+            run = true
+            while run
+                run = false
+                try
+                    fn()
+                catch e
+                    propogate_restart(e,restart)
+                    run = true
+                end
+            end
+        finally
+            pop!(handlers)
+        end
     end
 end
 
-function withhandler(fn,condition::Tuple{<:Type{<:AbstractCondition}},handler::Tuple{Function})
+function withhandler(fn,condition::Tuple{<:Type},handler::Tuple{Function})
     len = length(condition)
     len == length(handler) ||  throw(DimensionMismatch("Differing numbers of conditions and handlers"))
     for pos = 1:len
